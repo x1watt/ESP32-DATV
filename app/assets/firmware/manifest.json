@@ -1,0 +1,15 @@
+{
+  "chip": "esp32c3",
+  "info": "ESP32DATV 1",
+  "version": 1,
+  "source_commit": "7209d3d-dirty",
+  "idf": "v6.1",
+  "flash_mode": "dio",
+  "flash_freq": "80m",
+  "flash_size": "4MB",
+  "images": [
+    {"file": "bootloader.bin", "offset": 0, "md5": "1e0fcfbf859b43c0bd76c8f497731792"},
+    {"file": "partition-table.bin", "offset": 32768, "md5": "5d61d196adc3dba01928f264eb169be7"},
+    {"file": "esp32_datv.bin", "offset": 65536, "md5": "0350c8683abb25c4bbaec633add64f49"}
+  ]
+}

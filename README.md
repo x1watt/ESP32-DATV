@@ -27,7 +27,7 @@ is selected automatically and depends on modulation and symbol rate.
 
 You need an ESP32-C3 board with native USB Serial/JTAG, a Linux PC, Python 3 and FFmpeg.
 Install and activate [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/get-started/index.html)
-(tested with 6.2.0), then build and flash:
+(tested with 6.2.0 and 6.1; 5.5 builds and runs too, but its smaller free heap block makes 33 kS/s fail with `ERR out of memory`), then build and flash:
 
 ```sh
 git clone https://github.com/SP8ESA/ESP32-DATV.git
@@ -45,7 +45,9 @@ python3 -m venv .venv
 python3 -m pip install -r host/requirements.txt
 ```
 
-Replace `/dev/ttyACM0` with your board's port if necessary.
+Replace `/dev/ttyACM0` with your board's port if necessary. The build stops with an error if static
+data would reach the memory the RF block uses at 0x3FCA0000 (`firmware/main/bss_guard.ld`).
+`app/tool/build_firmware.sh <ESP-IDF directory>` rebuilds the firmware bundled in the app.
 
 ## Usage
 
@@ -85,6 +87,25 @@ All options: `python3 host/tx_dvbs.py --help`.
 
 The firmware permits 2300–2450 MHz. For on-air use, choose a frequency allowed by your
 amateur licence and add an output filter: DAC images are visible in the plots below.
+
+## App (Linux, Windows, Android)
+
+`app/` is a standalone Flutter app that needs neither Python nor FFmpeg nor ESP-IDF. It
+checks that a board runs the DATV firmware, installs the bundled firmware over the same
+USB cable, and transmits a video file (`.ts`, or `.mp4` with H.264/AAC), the camera, the
+screen or a test pattern, with optional microphone sound. All settings above are available.
+Video (H.264), audio (MPEG Layer II), the transport stream and the DVB-S/S2 coding are done
+in Dart; the DVB-S/S2 output is bit-identical to `host/dvbs.py` and `host/dvbs2.py`.
+
+```sh
+cd app
+flutter build linux --release      # or: flutter build windows / flutter build apk
+build/linux/x64/release/bundle/esp32_datv
+```
+
+On Linux your user needs access to `/dev/ttyACM*` (group `dialout`). Screen capture needs an
+X11 session. Use release builds for transmitting: debug builds pause too long for the ESP's
+buffer at high symbol rates.
 
 ## Spectra
 
