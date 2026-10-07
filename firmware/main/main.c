@@ -119,9 +119,17 @@ static double pll_hz(unsigned mhz, int khz) {
 }
 
 
+/* Test builds only (-DDATV_TEST_LOWBAND): lets the PLL be tried below the 13 cm band so that
+   an RTL-SDR can look at the output. Never ship such a build. */
+#ifdef DATV_TEST_LOWBAND
+#define TUNE_FMIN_KHZ 1000000u
+#else
+#define TUNE_FMIN_KHZ 2200000u
+#endif
+
 /* Nearest channel 1..13 for the calibration, then the PLL to MHz + kHz. */
 static bool tune(uint32_t fkhz) {
-    if (fkhz < 2200000 || fkhz > 2800000) return false;
+    if (fkhz < TUNE_FMIN_KHZ || fkhz > 2800000) return false;
     int ch = ((int)fkhz - 2407000 + 2500) / 5000;
     ch = ch < 1 ? 1 : ch > 13 ? 13 : ch;
     unsigned mhz = fkhz / 1000;
@@ -146,7 +154,11 @@ static bool tune(uint32_t fkhz) {
 #define DAC_CTRL   0x60033D64u
 #define DAC_BUF    ((volatile uint32_t *)0x3fcb0000)
 #define SRAM_OWNER 0x600c1020u
+#ifdef DATV_TEST_LOWBAND
+#define TX_FMIN_KHZ 1000000u
+#else
 #define TX_FMIN_KHZ 2300000u
+#endif
 #define TX_FMAX_KHZ 2450000u
 
 static portMUX_TYPE stream_mux = portMUX_INITIALIZER_UNLOCKED;
