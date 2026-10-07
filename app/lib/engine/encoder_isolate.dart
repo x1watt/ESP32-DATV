@@ -24,6 +24,7 @@ class EncoderSpec {
     required this.audioChannels,
     required this.testPattern,
     this.preset = 'fast',
+    this.text = '',
   });
 
   final int maxWidth, fps, videoBitrate;
@@ -32,6 +33,9 @@ class EncoderSpec {
   final int audioKbps, audioRate, audioChannels;
   final bool testPattern;
   final String preset;
+
+  /// Text shown in the middle of the test pattern (may contain newlines).
+  final String text;
 }
 
 class EncoderIsolateArgs {
@@ -87,6 +91,7 @@ class _Encoder {
   int _audioFrames = 0;
 
   Timer? _testTimer;
+  late String _text = s.text;
   ToneGenerator? _tone;
 
   int get _frameUs => 1000000 ~/ s.fps;
@@ -100,6 +105,8 @@ class _Encoder {
       case 'buf':
         _buffered = (m['s'] as num).toDouble();
         _sourceFeedback?.send({'k': 'buf', 's': _buffered});
+      case 'text':
+        _text = m['t'] as String? ?? '';
       case 'sourceFeedback':
         _sourceFeedback = m['port'] as SendPort?;
       case 'v':
@@ -124,7 +131,7 @@ class _Encoder {
       // catch up on the wall clock, one frame per tick at most
       final pts = n * _frameUs;
       if (pts > _clock.elapsedMicroseconds + _frameUs) return;
-      _encodeFrame(testPattern(w, h, n, s.fps, ptsUs: pts));
+      _encodeFrame(testPattern(w, h, n, s.fps, ptsUs: pts, text: _text));
       final tone = _tone;
       if (tone != null) {
         final want = ((n + 1) * _frameUs * s.audioRate / 1e6).round() - (n * _frameUs * s.audioRate / 1e6).round();

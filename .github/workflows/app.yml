@@ -18,7 +18,7 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Linux build dependencies
         run: |
           sudo apt-get update
@@ -34,7 +34,7 @@ jobs:
       - run: flutter build linux --release
       - name: Package
         run: tar -C build/linux/x64/release -czf esp32-datv-linux-x64.tar.gz bundle
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: esp32-datv-linux-x64
           path: app/esp32-datv-linux-x64.tar.gz
@@ -42,8 +42,8 @@ jobs:
   android:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -56,7 +56,7 @@ jobs:
       - run: flutter build apk --release
       - name: Package
         run: cp build/app/outputs/flutter-apk/app-release.apk esp32-datv-android.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: esp32-datv-android
           path: app/esp32-datv-android.apk
@@ -65,7 +65,7 @@ jobs:
     # windows-latest lacks the Visual Studio C++ workload that flutter build windows needs
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -76,7 +76,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath esp32-datv-windows-x64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: esp32-datv-windows-x64
           path: app/esp32-datv-windows-x64.zip
@@ -91,7 +91,7 @@ jobs:
       run:
         working-directory: .
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true

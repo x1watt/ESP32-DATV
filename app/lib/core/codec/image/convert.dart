@@ -4,6 +4,7 @@ library;
 import 'dart:typed_data';
 
 import '../frame.dart';
+import 'font5x7.dart';
 
 /// Output size for a source picture at a given width, height rounded to even
 /// (like `scale=w:-2`). Never upscales beyond the source width.
@@ -165,35 +166,38 @@ const List<List<int>> _bars = [
   [35, 212, 114], // blue
 ];
 
-// 5x7 glyphs for 0-9 and ':'
-const List<int> _glyphs = [
-  0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E, // 0
-  0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E, // 1
-  0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F, // 2
-  0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E, // 3
-  0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02, // 4
-  0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E, // 5
-  0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E, // 6
-  0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08, // 7
-  0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E, // 8
-  0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C, // 9
-  0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00, // :
-];
+void _fillLuma(I420Frame f, int x0, int y0, int x1, int y1, int luma) {
+  final xa = x0 < 0 ? 0 : x0, ya = y0 < 0 ? 0 : y0;
+  final xb = x1 > f.width ? f.width : x1, yb = y1 > f.height ? f.height : y1;
+  final cw = f.width >> 1;
+  for (var y = ya; y < yb; y++) {
+    f.y.fillRange(y * f.width + xa, y * f.width + (xb > xa ? xb : xa), luma);
+  }
+  // neutral chroma, so the box is grey whatever lies below
+  for (var y = ya >> 1; y < (yb + 1) >> 1 && y < f.height >> 1; y++) {
+    final s0 = y * cw + (xa >> 1), s1 = y * cw + ((xb + 1) >> 1).clamp(0, cw);
+    if (s1 > s0) {
+      f.u.fillRange(s0, s1, 128);
+      f.v.fillRange(s0, s1, 128);
+    }
+  }
+}
 
+/// Draws [s] (one line) with its top left corner at (x0, y0), [scale] pixels per font dot.
 void _drawText(I420Frame f, String s, int x0, int y0, int scale, int luma) {
   var x = x0;
-  for (final ch in s.codeUnits) {
-    final g = ch == 58 ? 10 : ch - 48;
-    if (g >= 0 && g <= 10) {
+  for (final ch in s.characters()) {
+    final cols = glyph5x7(ch);
+    for (var c = 0; c < 5; c++) {
+      final bits = cols[c];
       for (var r = 0; r < 7; r++) {
-        final bits = _glyphs[g * 7 + r];
-        for (var c = 0; c < 5; c++) {
-          if ((bits >> (4 - c)) & 1 == 0) continue;
-          for (var dy = 0; dy < scale; dy++) {
-            for (var dx = 0; dx < scale; dx++) {
-              final px = x + c * scale + dx, py = y0 + r * scale + dy;
-              if (px >= 0 && py >= 0 && px < f.width && py < f.height) f.y[py * f.width + px] = luma;
-            }
+        if ((bits >> r) & 1 == 0) continue;
+        for (var dy = 0; dy < scale; dy++) {
+          final py = y0 + r * scale + dy;
+          if (py < 0 || py >= f.height) continue;
+          for (var dx = 0; dx < scale; dx++) {
+            final px = x + c * scale + dx;
+            if (px >= 0 && px < f.width) f.y[py * f.width + px] = luma;
           }
         }
       }
@@ -202,8 +206,55 @@ void _drawText(I420Frame f, String s, int x0, int y0, int scale, int luma) {
   }
 }
 
+extension on String {
+  /// Characters (runes) as strings, so letters outside the BMP count once.
+  Iterable<String> characters() => runes.map(String.fromCharCode);
+}
+
+/// Draws [text] (lines separated by newlines) centred in the box (x0, y0)..(x0+bw, y0+bh) on
+/// a dark plate, as large as fits.
+void drawCentredText(I420Frame f, String text, int x0, int y0, int bw, int bh) {
+  // wrap words so that every line fits at the smallest size
+  final fit = (bw * 0.95) ~/ 6;
+  final lines = <String>[];
+  for (final para in text.split('\n')) {
+    var line = '';
+    for (final word in para.trimRight().split(' ')) {
+      final next = line.isEmpty ? word : '$line $word';
+      if (next.runes.length <= fit || line.isEmpty) {
+        line = next;
+      } else {
+        lines.add(line);
+        line = word;
+      }
+    }
+    lines.add(line);
+  }
+  while (lines.isNotEmpty && lines.last.isEmpty) {
+    lines.removeLast();
+  }
+  if (lines.isEmpty) return;
+  final maxChars = lines.map((l) => l.runes.length).reduce((a, b) => a > b ? a : b);
+  if (maxChars == 0) return;
+  // a character cell is 6 x 9 dots (5 x 7 glyph, one column and two rows of spacing)
+  var scale = (bw * 0.9) ~/ (maxChars * 6);
+  final byHeight = (bh * 0.9) ~/ (lines.length * 9);
+  if (byHeight < scale) scale = byHeight;
+  if (scale > 12) scale = 12;
+  if (scale < 1) scale = 1;
+  final th = lines.length * 9 * scale - 2 * scale;
+  final ty = y0 + (bh - th) ~/ 2;
+  final tw = maxChars * 6 * scale - scale;
+  _fillLuma(f, x0 + (bw - tw) ~/ 2 - 2 * scale, ty - 2 * scale, x0 + (bw + tw) ~/ 2 + 2 * scale,
+      ty + th + 2 * scale, 16);
+  for (var i = 0; i < lines.length; i++) {
+    final lw = lines[i].runes.length * 6 * scale - scale;
+    _drawText(f, lines[i], x0 + (bw - lw) ~/ 2, ty + i * 9 * scale, scale, 235);
+  }
+}
+
 /// Colour bars, a moving box and the elapsed time (mm:ss:ff), like a broadcast test card.
-I420Frame testPattern(int w, int h, int frameNo, int fps, {int ptsUs = 0}) {
+I420Frame testPattern(int w, int h, int frameNo, int fps, {int ptsUs = 0, String text = ''}) {
   final f = I420Frame.alloc(w, h, ptsUs: ptsUs);
   final cw = w >> 1, ch = h >> 1;
   final barH = h * 2 ~/ 3;
@@ -238,9 +289,9 @@ I420Frame testPattern(int w, int h, int frameNo, int fps, {int ptsUs = 0}) {
   }
   final secs = frameNo ~/ fps, ff = frameNo % fps;
   String two(int n) => n.toString().padLeft(2, '0');
-  final text = '${two(secs ~/ 60 % 60)}:${two(secs % 60)}:${two(ff)}';
+  final clock = '${two(secs ~/ 60 % 60)}:${two(secs % 60)}:${two(ff)}';
   final scale = (h ~/ 60).clamp(1, 8);
-  final tw = text.length * 6 * scale;
+  final tw = clock.length * 6 * scale;
   final ty = barH + (h - barH - 7 * scale) ~/ 2;
   // dark box behind the text
   for (var y = ty - scale; y < ty + 8 * scale && y < h; y++) {
@@ -248,7 +299,8 @@ I420Frame testPattern(int w, int h, int frameNo, int fps, {int ptsUs = 0}) {
       if (x >= 0 && y >= 0) f.y[y * w + x] = 16;
     }
   }
-  _drawText(f, text, (w - tw) ~/ 2, ty, scale, 235);
+  _drawText(f, clock, (w - tw) ~/ 2, ty, scale, 235);
+  if (text.trim().isNotEmpty) drawCentredText(f, text, 0, 0, w, barH);
   assert(ch > 0);
   return f;
 }

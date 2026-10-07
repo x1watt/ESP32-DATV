@@ -45,6 +45,7 @@ class AppController extends ChangeNotifier {
   String serviceName = 'ESP32-C3 DATV';
   String provider = 'ESP32-DATV';
   String preset = 'fast';
+  String patternText = '';
 
   List<PortInfo> ports = [];
   PortInfo? selectedPort;
@@ -104,6 +105,7 @@ class AppController extends ChangeNotifier {
         serviceName = m['service'] as String? ?? serviceName;
         provider = m['provider'] as String? ?? provider;
         preset = m['preset'] as String? ?? preset;
+        patternText = m['text'] as String? ?? patternText;
         micOn = m['mic'] as bool? ?? micOn;
       }
     } catch (_) {
@@ -134,6 +136,7 @@ class AppController extends ChangeNotifier {
           'service': serviceName,
           'provider': provider,
           'preset': preset,
+          'text': patternText,
           'mic': micOn,
         }));
   }
@@ -331,6 +334,7 @@ class AppController extends ChangeNotifier {
           serviceName: serviceName,
           provider: provider,
           preset: preset,
+          text: patternText,
         ),
         live: live,
       );
@@ -344,6 +348,13 @@ class AppController extends ChangeNotifier {
     }
     starting = false;
     notifyListeners();
+  }
+
+  /// Updates the test pattern text (live while transmitting).
+  void setPatternText(String t) {
+    patternText = t;
+    session?.setPatternText(t);
+    unawaited(_save());
   }
 
   Future<void> stop() async {

@@ -27,9 +27,13 @@ class SourceSpec {
     this.serviceName = 'ESP32-C3 DATV',
     this.provider = 'ESP32-DATV',
     this.preset = 'fast',
+    this.text = '',
   });
 
   final SourceKind kind;
+
+  /// Test pattern: text shown in the middle of the picture.
+  final String text;
   final String? filePath;
   final bool audio;
   final int width, videoKbps;
@@ -291,6 +295,7 @@ class DeviceSession implements MediaSink {
               audioChannels: b.audioChannels,
               testPattern: src.kind == SourceKind.testPattern,
               preset: src.preset,
+              text: src.text,
             ),
           ),
           debugName: 'encoder');
@@ -331,6 +336,9 @@ class DeviceSession implements MediaSink {
       _live.add(s);
     }
   }
+
+  /// Changes the test pattern text while transmitting.
+  void setPatternText(String t) => _encPort?.send({'k': 'text', 't': t});
 
   Future<void> stopTx() async {
     _linkCmd.send({'cmd': 'stop'});

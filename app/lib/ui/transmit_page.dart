@@ -37,6 +37,9 @@ class TransmitPage extends StatelessWidget {
               ),
           ]),
         ),
+        Text(_sourceHelp[c.sourceKind]!, style: Theme.of(context).textTheme.bodyMedium),
+        if (c.sourceKind == SourceKind.testPattern)
+          _PatternTextField(c: c),
         if (c.sourceKind == SourceKind.file)
           Row(children: [
             Expanded(child: Text(c.filePath ?? 'No file chosen', overflow: TextOverflow.ellipsis)),
@@ -243,4 +246,56 @@ class _PreviewImageState extends State<_PreviewImage> {
       child: RawImage(image: img, fit: BoxFit.contain),
     );
   }
+}
+
+const Map<SourceKind, String> _sourceHelp = {
+  SourceKind.file: 'Sends a video file from disk, looped. A .ts file goes out unchanged at its own bit rate, '
+      'so it must fit the channel. An .mp4 with H.264 video and AAC sound is sent as it is when it fits the '
+      'channel, otherwise the app decodes it and re-encodes it to the size, frame rate and bit rate the '
+      'channel allows.',
+  SourceKind.camera: 'Sends the live picture of a camera, scaled to fit the channel, with the microphone sound '
+      'if enabled below.',
+  SourceKind.screen: 'Sends what is on a screen (a monitor of this computer), scaled to fit the channel, with '
+      'the microphone sound if enabled below. On Linux this needs an X11 session.',
+  SourceKind.testPattern: 'Sends colour bars with a moving square, a running clock and an 800 Hz tone. Handy '
+      'to check the receiver and the picture quality. The text you type below appears in the middle of the '
+      'picture and can be changed while on air (for example your callsign).',
+  SourceKind.nullPackets: 'Sends a valid DVB signal that carries only empty (null) transport packets: no '
+      'picture and no sound. Use it to lock a receiver, measure the spectrum or tune the frequency and '
+      'crystal correction.',
+  SourceKind.carrier: 'Sends an unmodulated carrier at the centre frequency, without any DVB coding. Use it '
+      'to measure the frequency error of the board (crystal ppm) or the output power.',
+};
+
+/// The text for the test pattern; changes are sent to the encoder while typing.
+class _PatternTextField extends StatefulWidget {
+  const _PatternTextField({required this.c});
+  final AppController c;
+
+  @override
+  State<_PatternTextField> createState() => _PatternTextFieldState();
+}
+
+class _PatternTextFieldState extends State<_PatternTextField> {
+  late final TextEditingController _t = TextEditingController(text: widget.c.patternText);
+
+  @override
+  void dispose() {
+    _t.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => TextField(
+        controller: _t,
+        minLines: 1,
+        maxLines: 3,
+        maxLength: 120,
+        decoration: const InputDecoration(
+          labelText: 'Text in the middle of the picture',
+          hintText: 'e.g. your callsign',
+          border: OutlineInputBorder(),
+        ),
+        onChanged: widget.c.setPatternText,
+      );
 }
