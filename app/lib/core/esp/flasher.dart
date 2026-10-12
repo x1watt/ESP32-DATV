@@ -112,22 +112,46 @@ class EspFlasher {
   final SlipDecoder _slip = SlipDecoder();
   final List<_Resp> _pending = [];
 
+  // One line at a time, in esptool's order: on Windows the two lines cannot change
+  // together, and the order decides which states the chip sees in between.
+  Future<void> _dtr(bool v) => t.setSignals(dtr: v);
+  Future<void> _rts(bool v) => t.setSignals(rts: v);
+
   /// USB-Serial-JTAG reset into the ROM download mode (esptool's USBJTAGSerialReset).
+  /// DTR=1 RTS=0 asks for download mode, DTR=0 RTS=1 resets; the way from one to the other
+  /// must go through DTR=1 RTS=1, because DTR=0 RTS=0 cancels the download request.
   Future<void> resetToBootloader() async {
-    await t.setSignals(dtr: false, rts: false);
+    await _rts(false);
+    await _dtr(false); // idle
     await _sleep(100);
-    await t.setSignals(dtr: true, rts: false);
+    await _dtr(true); // boot pin low
+    await _rts(false);
     await _sleep(100);
-    await t.setSignals(dtr: false, rts: true);
+    await _rts(true); // through (1,1), not (0,0)
+    await _dtr(false); // reset
+    await _rts(true);
     await _sleep(100);
-    await t.setSignals(dtr: false, rts: false);
+    await _dtr(false);
+    await _rts(false); // out of reset into the ROM loader
+  }
+
+  /// Classic reset for boards with a USB-UART bridge (DTR drives IO9/IO0, RTS drives EN).
+  Future<void> classicResetToBootloader() async {
+    await _dtr(false);
+    await _rts(true); // EN low
+    await _sleep(100);
+    await _dtr(true); // IO low
+    await _rts(false); // EN high
+    await _sleep(50);
+    await _dtr(false);
   }
 
   /// Hard reset into the application (RTS pulses the chip's reset).
   Future<void> hardReset() async {
-    await t.setSignals(dtr: false, rts: true);
+    await _dtr(false);
+    await _rts(true);
     await _sleep(200);
-    await t.setSignals(dtr: false, rts: false);
+    await _rts(false);
     await _sleep(200);
   }
 
@@ -207,10 +231,18 @@ class EspFlasher {
   /// Resets into the bootloader, syncs and checks the chip. Returns the chip magic.
   Future<int> connect({FlashProgress? progress}) async {
     progress?.call('Resetting into the bootloader', 0);
-    for (var attempt = 0; attempt < 3; attempt++) {
-      await resetToBootloader();
-      await _sleep(300);
-      if (await sync()) {
+    // 0: the board may already wait in download mode (BOOT held while plugging in or resetting);
+    // a reset now could take it out again, so try without one first.
+    // 1, 2: USB-Serial-JTAG reset (native USB boards). 3: classic reset (USB-UART bridges).
+    for (var attempt = 0; attempt < 4; attempt++) {
+      if (attempt == 1 || attempt == 2) {
+        await resetToBootloader();
+        await _sleep(300);
+      } else if (attempt == 3) {
+        await classicResetToBootloader();
+        await _sleep(300);
+      }
+      if (await sync(attempts: attempt == 0 ? 2 : 7)) {
         final magic = await readReg(_chipMagicReg);
         if (!esp32c3Magic.contains(magic)) {
           throw FlashError('Not an ESP32-C3 (chip magic 0x${magic.toRadixString(16)})');
@@ -218,7 +250,9 @@ class EspFlasher {
         return magic;
       }
     }
-    throw FlashError('The ROM loader does not answer. Hold BOOT, press RESET (or replug), release BOOT, retry.');
+    throw FlashError('The ESP32-C3 ROM loader does not answer. Put the board in download mode by hand: '
+        'hold BOOT, tap RESET (or unplug and plug in again while holding BOOT), release BOOT, then '
+        'click Install firmware again.');
   }
 
   Future<void> _attachAndParams() async {

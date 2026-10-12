@@ -75,6 +75,7 @@ class WindowsSerialTransport implements ByteTransport {
   final String name;
   int _h;
   int _readTimeoutMs = -1;
+  bool _dtrState = false;
   final Pointer<Uint8> _rbuf = malloc<Uint8>(65536);
   Pointer<Uint8> _wbuf = malloc<Uint8>(16384);
   int _wcap = 16384;
@@ -137,8 +138,16 @@ class WindowsSerialTransport implements ByteTransport {
   @override
   Future<void> setSignals({bool? dtr, bool? rts}) async {
     _check();
-    if (dtr != null) _escapeCommFunction(_h, dtr ? _setDtr : _clrDtr);
-    if (rts != null) _escapeCommFunction(_h, rts ? _setRts : _clrRts);
+    if (dtr != null) {
+      _dtrState = dtr;
+      _escapeCommFunction(_h, dtr ? _setDtr : _clrDtr);
+    }
+    if (rts != null) {
+      _escapeCommFunction(_h, rts ? _setRts : _clrRts);
+      // usbser.sys only sends SET_CONTROL_LINE_STATE when DTR is written: write DTR again
+      // with its current value so that the RTS change reaches the device (as esptool does).
+      _escapeCommFunction(_h, _dtrState ? _setDtr : _clrDtr);
+    }
   }
 
   @override

@@ -14,6 +14,14 @@ import 'file_source_isolate.dart';
 import 'link_isolate.dart';
 import 'transport_factory.dart';
 
+/// An error reported by an engine isolate (its message is shown as is).
+class EngineError implements Exception {
+  EngineError(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 enum SourceKind { testPattern, camera, screen, file, nullPackets, carrier }
 
 /// What to transmit.
@@ -210,7 +218,7 @@ class DeviceSession implements MediaSink {
     final sub = _bus.stream.listen((m) {
       if (m['id'] != id) return;
       if (m['ev'] == 'error') {
-        if (!done.isCompleted) done.completeError(StateError(m['msg'] as String? ?? 'error'));
+        if (!done.isCompleted) done.completeError(EngineError(m['msg'] as String? ?? 'error'));
       } else if (finalEvents.contains(m['ev'])) {
         if (!done.isCompleted) done.complete(m);
       } else {
