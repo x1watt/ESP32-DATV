@@ -15,8 +15,11 @@
  *   HEAP
  *   QPSKT f_MHz baud sps [amp [seconds [ifm [target [dcI dcQ [g phi]]]]]]   see qpsk_lut.h and README.md
  *   PSK8T ...same arguments   8PSK from the generic loop (3 bit symbols, 16..64 samples per symbol at 8 MS/s)
+ *   RX f_MHz rate n [agc|gain]         one receive burst (see rx_burst.h), RXSTREAM: bursts until a host byte
+ *   RXINFO                              receive capabilities (highest gain index)
  *
- * Transmit only. Licensed amateur use only: the firmware refuses anything outside 2300..2450 MHz.
+ * Transmitting is for licensed amateurs only: the firmware refuses to transmit outside 2300..2450 MHz.
+ * Receiving (bursts, no continuous stream) works from 2200 to 2800 MHz.
  */
 #include <inttypes.h>
 #include <stddef.h>
@@ -100,6 +103,7 @@ static void usb_drain_rx(void) {
 /* ------------------------------------------------------------ radio */
 
 static double lo_hz;               /* exact LO after the last tune */
+static bool tune_quiet;            /* receive bursts retune silently */
 
 
 static unsigned chan_mhz(unsigned ch) { return ch == 14 ? 2484 : 2407 + 5 * ch; }
@@ -143,7 +147,7 @@ static bool tune(uint32_t fkhz) {
     rom_set_rxclk_en(1);
     force_rx_gain(0, 40, 0);                 /* hardware AGC; the receiver is not used here */
     lo_hz = pll_hz(mhz, khz);
-    say("LO %" PRIu32 " Hz (channel %d, offset %d kHz)\r\n", (uint32_t)llround(lo_hz), ch, (int)fkhz - chan_mhz(ch) * 1000);
+    if (!tune_quiet) say("LO %" PRIu32 " Hz (channel %d, offset %d kHz)\r\n", (uint32_t)llround(lo_hz), ch, (int)fkhz - chan_mhz(ch) * 1000);
     return true;
 }
 
@@ -842,9 +846,23 @@ static void tx_qpsk_lut(uint32_t fkhz, uint32_t baud_req, uint32_t sps, int32_t 
 
 /* ------------------------------------------------------------ commands */
 
+#include "rx_burst.h"
+
 static void handle(char *line) {
+    if (!strncmp(line, "RX ", 3)) {
+        rx_command(line, false);
+        return;
+    }
+    if (!strcmp(line, "RXINFO")) {
+        say("RXINFO gainmax %u rates 16 80 snapshot %u ring %u\r\n", rx_gain_max(), RX_MAX_SNAPSHOT, RX_RING);
+        return;
+    }
+    if (!strncmp(line, "RXSTREAM ", 9)) {
+        rx_command(line, true);
+        return;
+    }
     if (!strcmp(line, "INFO")) {
-        say("ESP32DATV 1\r\n");
+        say("ESP32DATV 2\r\n");
     } else if (!strcmp(line, "HEAP")) {
         say("HEAP free %u largest %u\r\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     } else if (!strncmp(line, "QPSKT ", 6) || !strncmp(line, "PSK8T ", 6) || !strncmp(line, "A16T ", 5)) {
@@ -862,7 +880,7 @@ static void handle(char *line) {
         }
         tx_qpsk_lut(fk, (uint32_t)baud, (uint32_t)sps, (int32_t)amp, (uint32_t)secs, (int32_t)ifm, (int32_t)tgt, (int32_t)dc4i, (int32_t)dc4q, (int32_t)gq, (int32_t)phim, psk8, a16, (uint32_t)gam);
     } else {
-        say("ERR ? (commands: INFO, HEAP, QPSKT, PSK8T, A16T)\r\n");
+        say("ERR ? (commands: INFO, HEAP, QPSKT, PSK8T, A16T, RX, RXSTREAM)\r\n");
     }
 }
 

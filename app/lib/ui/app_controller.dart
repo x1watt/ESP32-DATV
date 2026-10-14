@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -64,6 +65,27 @@ class AppController extends ChangeNotifier {
   CaptureDevice? camera, screen, mic;
   bool micOn = true;
 
+  // ---------------------------------------------------------------- receiver
+  double rxSignalMhz = 2370.0;
+  int rxBaud = 125000;
+  int rxRate = 16;
+  int rxGain = -1;
+
+  /// The LO sits this far below the signal (keeps the signal off the 0 Hz spike).
+  static const double rxOffsetHz = 500e3;
+  RxFrame? rxFrame;
+  Float32List? rxAverage; // linear power, averaged over bursts
+  final List<Float32List> rxWaterfall = [];
+  final List<Float32List> rxConstellation = [];
+  double rxMerAvg = double.nan, rxSnrAvg = double.nan, rxCentreAvg = double.nan;
+
+  /// Whether the last burst held the signal (SNR of at least 3 dB), and how many did.
+  bool rxSignalSeen = false;
+  int rxSignalBursts = 0;
+  StreamSubscription<RxFrame>? _rxSub;
+  bool get receiving => session?.receiving ?? false;
+  int get rxGainMax => session?.rxGainMax ?? 79;
+
   TxStatus? status;
   Preview? preview;
   StreamSubscription<TxStatus>? _statusSub;
@@ -107,6 +129,10 @@ class AppController extends ChangeNotifier {
         preset = m['preset'] as String? ?? preset;
         patternText = m['text'] as String? ?? patternText;
         micOn = m['mic'] as bool? ?? micOn;
+        rxSignalMhz = (m['rxFreq'] as num?)?.toDouble() ?? rxSignalMhz;
+        rxBaud = m['rxBaud'] as int? ?? rxBaud;
+        rxRate = m['rxRate'] as int? ?? rxRate;
+        rxGain = m['rxGain'] as int? ?? rxGain;
       }
     } catch (_) {
       // corrupt preferences: keep defaults
@@ -138,6 +164,10 @@ class AppController extends ChangeNotifier {
           'preset': preset,
           'text': patternText,
           'mic': micOn,
+          'rxFreq': rxSignalMhz,
+          'rxBaud': rxBaud,
+          'rxRate': rxRate,
+          'rxGain': rxGain,
         }));
   }
 
@@ -258,6 +288,8 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    await _rxSub?.cancel();
+    _rxSub = null;
     await _statusSub?.cancel();
     await _previewSub?.cancel();
     _statusSub = null;
@@ -355,6 +387,93 @@ class AppController extends ChangeNotifier {
     patternText = t;
     session?.setPatternText(t);
     unawaited(_save());
+  }
+
+  /// Starts receiving bursts around [rxSignalMhz].
+  void startRx() {
+    final s = session;
+    if (s == null) return;
+    message = null;
+    rxAverage = null;
+    rxWaterfall.clear();
+    rxConstellation.clear();
+    rxMerAvg = double.nan;
+    rxSnrAvg = double.nan;
+    rxCentreAvg = double.nan;
+    rxSignalBursts = 0;
+    rxFrame = null;
+    _rxSub ??= s.rxFrames.listen(_onRxFrame);
+    try {
+      s.startRx(
+        freqMhz: rxSignalMhz - rxOffsetHz / 1e6,
+        rateMsps: rxRate,
+        gain: rxGain,
+        baud: rxBaud.toDouble(),
+        offsetHz: rxOffsetHz,
+      );
+    } catch (e) {
+      message = e.toString();
+      messageIsError = true;
+    }
+    notifyListeners();
+    // the engine reports errors asynchronously
+    Future<void>.delayed(const Duration(seconds: 3), () {
+      final err = session?.rxError;
+      if (err != null) {
+        message = err;
+        messageIsError = true;
+        notifyListeners();
+      }
+    });
+  }
+
+  Future<void> stopRx() async {
+    await session?.stopRx();
+    notifyListeners();
+  }
+
+  /// Restarts the receiver with new settings if it is running.
+  Future<void> rxSettingsChanged() async {
+    unawaited(_save());
+    if (receiving) {
+      await stopRx();
+      startRx();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  void _onRxFrame(RxFrame f) {
+    rxFrame = f;
+    final n = f.spectrumDb.length;
+    final lin = Float32List(n);
+    for (var i = 0; i < n; i++) {
+      lin[i] = math.pow(10, f.spectrumDb[i] / 10).toDouble();
+    }
+    final avg = rxAverage;
+    if (avg == null || avg.length != n) {
+      rxAverage = lin;
+    } else {
+      for (var i = 0; i < n; i++) {
+        avg[i] = 0.7 * avg[i] + 0.3 * lin[i];
+      }
+    }
+    rxWaterfall.insert(0, f.spectrumDb);
+    if (rxWaterfall.length > 120) rxWaterfall.removeLast();
+    double ema(double old, double v) => v.isNaN ? old : (old.isNaN ? v : 0.8 * old + 0.2 * v);
+    // bursts without the signal (or with a much weaker one) would only add noise to these
+    rxSignalSeen = !f.snrDb.isNaN && f.snrDb >= 3;
+    if (rxSignalSeen) {
+      if (f.symbols.isNotEmpty) {
+        rxConstellation.insert(0, f.symbols);
+        if (rxConstellation.length > 4) rxConstellation.removeLast();
+      }
+      rxMerAvg = ema(rxMerAvg, f.merDb);
+      rxSnrAvg = ema(rxSnrAvg, f.snrDb);
+      rxCentreAvg = ema(rxCentreAvg, f.loHz + f.centreOffsetHz);
+      rxSignalBursts++;
+    }
+    notifyListeners();
   }
 
   Future<void> stop() async {

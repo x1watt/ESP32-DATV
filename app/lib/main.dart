@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'ui/app_controller.dart';
 import 'ui/device_page.dart';
+import 'ui/receive_page.dart';
 import 'ui/settings_page.dart';
 import 'ui/transmit_page.dart';
 
@@ -47,16 +48,19 @@ class _HomeState extends State<Home> {
         listenable: widget.c,
         builder: (context, _) {
           final c = widget.c;
-          final pages = [DevicePage(c: c), SettingsPage(c: c), TransmitPage(c: c)];
+          final pages = [DevicePage(c: c), SettingsPage(c: c), TransmitPage(c: c), ReceivePage(c: c)];
           const dests = [
             (Icons.usb, 'Device'),
             (Icons.tune, 'Settings'),
             (Icons.sensors, 'Transmit'),
+            (Icons.radar, 'Receive'),
           ];
           final wide = MediaQuery.sizeOf(context).width >= 720;
           final title = Row(children: [
             const Text('ESP32-DATV'),
             const Spacer(),
+            if (c.receiving)
+              const Chip(avatar: Icon(Icons.radar, size: 18), label: Text('RECEIVING')),
             if (c.transmitting)
               Chip(
                 avatar: const Icon(Icons.sensors, color: Colors.white, size: 18),

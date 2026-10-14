@@ -16,6 +16,10 @@ import '../core/esp/flasher.dart';
 import '../core/esp/transport.dart';
 import '../core/esp/tx_config.dart';
 import '../core/pipeline/pacer.dart';
+import '../core/rx/burst.dart';
+import '../core/rx/fft.dart';
+import '../core/rx/qpsk_analyzer.dart';
+import '../core/rx/rx_reader.dart';
 import '../core/ts/mux.dart';
 import '../core/ts/ts_rate.dart';
 import 'transport_factory.dart';
@@ -55,6 +59,7 @@ class _LinkServer {
   ByteTransport? _t;
   bool _busy = false;
   Pacer? _pacer;
+  bool _rxStop = false;
   TsMuxer? _mux;
   SendPort? _feedback;
   final Queue<Uint8List> _tsQ = Queue<Uint8List>(); // passthrough TS packets
@@ -86,6 +91,7 @@ class _LinkServer {
     final id = m['id'];
     if (m['cmd'] == 'stop') {
       _pacer?.stop();
+      _rxStop = true;
       return;
     }
     if (_busy) {
@@ -99,6 +105,8 @@ class _LinkServer {
           await _hello(id, probeRom: m['probeRom'] == true);
         case 'flash':
           await _flash(id, m);
+        case 'rx':
+          await _rx(id, m);
         case 'tx':
           await _tx(id, m);
       }
@@ -216,6 +224,68 @@ class _LinkServer {
   }
 
   // ---------------------------------------------------------------- TX
+  // ---------------------------------------------------------------- receive bursts
+  Future<void> _rx(Object? id, Map<String, Object?> m) async {
+    final cfg = RxConfig(
+      freqMhz: (m['freqMhz'] as num).toDouble(),
+      rateMsps: m['rate'] as int,
+      gain: m['gain'] as int,
+      baud: (m['baud'] as num).toDouble(),
+      offsetHz: (m['offsetHz'] as num).toDouble(),
+    );
+    final t = await _open();
+    final link = EspLink(t);
+    final info = await link.hello(tries: 6, bootWaitMs: 200);
+    if (info == null) throw EspError('The board does not answer INFO: install the DATV firmware first');
+    if (info.version < 2) throw EspError('Receiving needs DATV firmware version 2 or later: install the bundled firmware');
+    final rxInfo = await link.query('RXINFO');
+    final gm = RegExp(r'gainmax (\d+)').firstMatch(rxInfo);
+    _ev({'ev': 'rxInfo', 'id': id, 'gainMax': gm == null ? 79 : int.parse(gm[1]!)});
+    final reader = RxReader(t);
+    _rxStop = false;
+    await reader.start(cfg);
+    final sw = Stopwatch()..start();
+    var bursts = 0;
+    var lastRate = 0;
+    try {
+      while (!_rxStop) {
+        await Future<void>.delayed(Duration.zero); // let the stop message in
+        final x = await reader.next(timeout: const Duration(milliseconds: 30));
+        if (x is! RxBurst) continue;
+        bursts++;
+        final spectrum = welchSpectrumDb(x.iq, 1024);
+        final q = cfg.baud > 0 ? analyzeQpsk(x.iq, x.sampleRate, cfg.offsetHz, cfg.baud) : null;
+        final sym = q?.symbols ?? Float32List(0);
+        final nSym = sym.length > 1024 ? 1024 : sym.length;
+        if (sw.elapsedMilliseconds - lastRate >= 1000) lastRate = sw.elapsedMilliseconds;
+        _ev({
+          'ev': 'rxFrame',
+          'id': id,
+          'spectrum': TransferableTypedData.fromList([spectrum]),
+          'fs': x.sampleRate,
+          'loHz': x.loHz,
+          'gain': x.gain,
+          'level': q?.levelDbfs ?? double.nan,
+          'centre': q?.centreOffsetHz ?? double.nan,
+          'snr': q?.snrDb ?? double.nan,
+          'mer': q?.merDb ?? double.nan,
+          'symbols': TransferableTypedData.fromList([Float32List.sublistView(sym, 0, nSym)]),
+          'bursts': bursts,
+          'rate': bursts / (sw.elapsedMilliseconds / 1000 + 1e-9),
+          'crcErrors': reader.bad,
+        });
+      }
+    } finally {
+      String end;
+      try {
+        end = await reader.stop();
+      } catch (e) {
+        end = 'no RX END ($e)';
+      }
+      _ev({'ev': 'rxEnd', 'id': id, 'summary': end});
+    }
+  }
+
   Future<void> _tx(Object? id, Map<String, Object?> m) async {
     final cfg = TxConfig.fromJson((m['config'] as Map).cast<String, dynamic>());
     final plan = TxPlan.of(cfg);

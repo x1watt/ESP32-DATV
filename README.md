@@ -107,6 +107,16 @@ On Linux your user needs access to `/dev/ttyACM*` (group `dialout`). Screen capt
 X11 session. Use release builds for transmitting: debug builds pause too long for the ESP's
 buffer at high symbol rates.
 
+### Receiver
+
+The Receive page turns the same board into a signal analyser for 2200-2800 MHz (firmware
+version 2, installed from the Device page). The ESP32-C3 cannot stream received samples
+without gaps, so it records short bursts (1 ms at 16 MS/s, or up to 0.2 ms at 80 MS/s) about
+ten times per second. The app shows the spectrum, a waterfall, the QPSK constellation, level,
+SNR, MER and the measured signal frequency with its error in kHz and ppm, which helps to set
+the crystal correction. It does not decode video. Transmitting and receiving cannot run at
+the same time.
+
 ## Spectra
 
 Measured on 2026-10-05 at 2370 MHz with a tinySA Ultra+, `--amp 300` and null transport

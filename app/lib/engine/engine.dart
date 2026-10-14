@@ -77,6 +77,35 @@ class TxStatus {
   String? error;
 }
 
+/// One analysed receive burst, ready for display.
+class RxFrame {
+  RxFrame({
+    required this.spectrumDb,
+    required this.sampleRate,
+    required this.loHz,
+    required this.gain,
+    required this.levelDbfs,
+    required this.centreOffsetHz,
+    required this.snrDb,
+    required this.merDb,
+    required this.symbols,
+    required this.bursts,
+    required this.burstsPerSecond,
+    required this.crcErrors,
+  });
+
+  /// Averaged power spectrum, DC in the middle, dB full scale per bin.
+  final Float32List spectrumDb;
+  final double sampleRate, loHz;
+  final int gain;
+  final double levelDbfs, centreOffsetHz, snrDb, merDb;
+
+  /// Recovered QPSK symbols, interleaved re/im, unit power.
+  final Float32List symbols;
+  final int bursts, crcErrors;
+  final double burstsPerSecond;
+}
+
 class Preview {
   Preview(this.rgba, this.width, this.height);
   final Uint8List rgba;
@@ -110,6 +139,15 @@ class DeviceSession implements MediaSink {
   final StreamController<Preview> _preview = StreamController.broadcast();
 
   Stream<TxStatus> get statusStream => _status.stream;
+
+  final StreamController<RxFrame> _rxFrames = StreamController.broadcast();
+  Stream<RxFrame> get rxFrames => _rxFrames.stream;
+  int? _rxId;
+  bool get receiving => _rxId != null;
+
+  /// Highest manual receive gain index, known after the first receive start.
+  int rxGainMax = 79;
+  String? rxError, rxEnd;
   Stream<Preview> get previews => _preview.stream;
   bool get transmitting => _txId != null;
   int? _txId;
@@ -195,12 +233,36 @@ class DeviceSession implements MediaSink {
       case 'preview':
         _preview.add(Preview((m['data'] as TransferableTypedData).materialize().asUint8List(), m['w'] as int,
             m['h'] as int));
+      case 'rxInfo':
+        rxGainMax = m['gainMax'] as int;
+      case 'rxFrame':
+        _rxFrames.add(RxFrame(
+          spectrumDb: (m['spectrum'] as TransferableTypedData).materialize().asFloat32List(),
+          sampleRate: (m['fs'] as num).toDouble(),
+          loHz: (m['loHz'] as num).toDouble(),
+          gain: m['gain'] as int,
+          levelDbfs: (m['level'] as num).toDouble(),
+          centreOffsetHz: (m['centre'] as num).toDouble(),
+          snrDb: (m['snr'] as num).toDouble(),
+          merDb: (m['mer'] as num).toDouble(),
+          symbols: (m['symbols'] as TransferableTypedData).materialize().asFloat32List(),
+          bursts: m['bursts'] as int,
+          burstsPerSecond: (m['rate'] as num).toDouble(),
+          crcErrors: m['crcErrors'] as int,
+        ));
+      case 'rxEnd':
+        rxEnd = m['summary'] as String?;
+        _rxId = null;
       case 'isolateError':
         status.error = '${m['where']}: ${m['msg']}';
         // ignore: avoid_print
         print('isolate error in ${m['where']}: ${m['msg']}\n${m['stack']}');
         _status.add(status);
       case 'error':
+        if (m['id'] == _rxId) {
+          rxError = m['msg'] as String?;
+          _rxId = null;
+        }
         if (m['id'] == _txId) {
           status.error = m['msg'] as String?;
           _txId = null;
@@ -261,6 +323,7 @@ class DeviceSession implements MediaSink {
   /// Starts transmitting. [live] are already-created capture sources (camera/screen/mic).
   Future<void> startTx(TxConfig cfg, SourceSpec src, {List<MediaSource> live = const []}) async {
     if (_txId != null) throw StateError('Already transmitting');
+    if (_rxId != null) throw StateError('Stop receiving first');
     final plan = TxPlan.of(cfg);
     final b = plan.budget(width: src.width, videoKbps: src.videoKbps, audio: src.audio);
     if (b.videoBitrate < 6000 && src.kind != SourceKind.nullPackets && src.kind != SourceKind.carrier && !src.isTs) {
@@ -343,6 +406,35 @@ class DeviceSession implements MediaSink {
       await s.start(this);
       _live.add(s);
     }
+  }
+
+  /// Starts receive bursts: [freqMhz] is the LO; the signal is expected [offsetHz] above it.
+  void startRx({required double freqMhz, required int rateMsps, required int gain, required double baud, required double offsetHz}) {
+    if (_txId != null) throw StateError('Stop transmitting first');
+    if (_rxId != null) return;
+    rxError = null;
+    rxEnd = null;
+    final id = _nextId++;
+    _rxId = id;
+    _linkCmd.send({
+      'cmd': 'rx',
+      'id': id,
+      'freqMhz': freqMhz,
+      'rate': rateMsps,
+      'gain': gain,
+      'baud': baud,
+      'offsetHz': offsetHz,
+    });
+  }
+
+  Future<void> stopRx() async {
+    if (_rxId == null) return;
+    _linkCmd.send({'cmd': 'stop'});
+    final sw = Stopwatch()..start();
+    while (_rxId != null && sw.elapsedMilliseconds < 4000) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    _rxId = null;
   }
 
   /// Changes the test pattern text while transmitting.
