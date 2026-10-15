@@ -12,6 +12,7 @@ import '../platform/capture/media_source.dart';
 import 'encoder_isolate.dart';
 import 'file_source_isolate.dart';
 import 'link_isolate.dart';
+import 'monitor_isolate.dart';
 import 'transport_factory.dart';
 
 /// An error reported by an engine isolate (its message is shown as is).
@@ -74,6 +75,9 @@ class TxStatus {
   int encQp = 0, encDropped = 0, encW = 0, encH = 0;
   String? fileInfo;
   String? endSummary;
+
+  /// On-air monitor: what the transmitted transport stream contains.
+  MonitorInfo? monitor;
   String? error;
 }
 
@@ -106,6 +110,30 @@ class RxFrame {
   final double burstsPerSecond;
 }
 
+/// The contents of the transmitted transport stream, decoded by the monitor isolate.
+class MonitorInfo {
+  MonitorInfo.fromMap(Map<String, Object?> m)
+      : service = m['service'] as String?,
+        provider = m['provider'] as String?,
+        streams = (m['streams'] as List).cast<String>(),
+        packets = m['packets'] as int,
+        nullPackets = m['null'] as int,
+        tsErrors = m['ccErrors'] as int,
+        frames = m['frames'] as int,
+        fps = (m['fps'] as num).toDouble(),
+        width = m['w'] as int,
+        height = m['h'] as int,
+        decodeErrors = m['decErrors'] as int,
+        gaps = m['gaps'] as int,
+        audioPackets = m['audioPes'] as int,
+        note = m['note'] as String?;
+
+  final String? service, provider, note;
+  final List<String> streams;
+  final int packets, nullPackets, tsErrors, frames, width, height, decodeErrors, gaps, audioPackets;
+  final double fps;
+}
+
 class Preview {
   Preview(this.rgba, this.width, this.height);
   final Uint8List rgba;
@@ -128,6 +156,9 @@ class DeviceSession implements MediaSink {
   SendPort? _encPort;
   Isolate? _fileSrc;
   SendPort? _filePort;
+  Isolate? _monitorIso;
+  SendPort? _monitorPort;
+  Completer<void>? _monitorReady;
   final List<MediaSource> _live = [];
   final Stopwatch _clock = Stopwatch();
   int _inFlight = 0;
@@ -229,6 +260,12 @@ class DeviceSession implements MediaSink {
         _linkMedia.send({'k': 'feedback', 'port': _filePort}); // passthrough: the link paces the file
       case 'fileInfo':
         status.fileInfo = m['text'] as String?;
+        _status.add(status);
+      case 'monitorReady':
+        _monitorPort = m['port'] as SendPort;
+        _monitorReady?.complete();
+      case 'monitorInfo':
+        status.monitor = MonitorInfo.fromMap(m);
         _status.add(status);
       case 'preview':
         _preview.add(Preview((m['data'] as TransferableTypedData).materialize().asUint8List(), m['w'] as int,
@@ -335,6 +372,7 @@ class DeviceSession implements MediaSink {
       ..endSummary = null
       ..error = null
       ..fileInfo = null
+      ..monitor = null
       ..encFps = 0
       ..encKbps = 0;
     _clock
@@ -349,6 +387,11 @@ class DeviceSession implements MediaSink {
     if (src.kind == SourceKind.file && !src.isTs) {
       // decide passthrough vs transcode in the file isolate; it reports back
       passthrough = await FileSourceProbe.fits(src.filePath!, b);
+    }
+    if (src.kind != SourceKind.carrier) {
+      _monitorReady = Completer<void>();
+      _monitorIso = await Isolate.spawn(monitorIsolateMain, MonitorIsolateArgs(_events.sendPort), debugName: 'monitor');
+      await _monitorReady!.future;
     }
     if (media && !passthrough) {
       _encReady = Completer<void>();
@@ -377,6 +420,7 @@ class DeviceSession implements MediaSink {
       'id': id,
       'config': cfg.toJson(),
       'cw': src.kind == SourceKind.carrier,
+      'monitor': _monitorPort,
       'tsFile': src.isTs ? src.filePath : null,
       'mux': media
           ? {
@@ -459,13 +503,17 @@ class DeviceSession implements MediaSink {
     _encPort = null;
     _filePort?.send({'k': 'stop'});
     _filePort = null;
+    _monitorPort?.send({'k': 'stop'});
+    _monitorPort = null;
     // isolates exit on 'stop'; make sure they are gone even if one is stuck
-    final enc = _encoder, file = _fileSrc;
+    final enc = _encoder, file = _fileSrc, mon = _monitorIso;
     _encoder = null;
     _fileSrc = null;
+    _monitorIso = null;
     Future<void>.delayed(const Duration(seconds: 2), () {
       enc?.kill();
       file?.kill();
+      mon?.kill();
     });
   }
 

@@ -159,6 +159,7 @@ class _StatusCard extends StatelessWidget {
         ('Encoder', '${s.encW}x${s.encH}, ${s.encFps.toStringAsFixed(1)} fps, ${s.encKbps.toStringAsFixed(0)} kb/s, '
             'QP ${s.encQp}${s.encDropped > 0 ? ', ${s.encDropped} frames dropped' : ''}'),
       if (s.fileInfo != null) ('File', s.fileInfo!),
+      ...?_monitorRows(s.monitor),
       if (s.startLine != null) ('ESP', s.startLine!),
       if (s.endSummary != null) ('Finished', s.endSummary!),
       if (s.error != null) ('Error', s.error!),
@@ -175,7 +176,14 @@ class _StatusCard extends StatelessWidget {
               for (final (k, v) in rows) KeyValue(k, v),
             ],
           );
-          final pv = preview == null ? null : _PreviewImage(p: preview!);
+          final pv = preview == null
+              ? null
+              : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _PreviewImage(p: preview!),
+                  const SizedBox(height: 4),
+                  Text('Decoded from the transport stream being transmitted',
+                      style: Theme.of(context).textTheme.bodySmall),
+                ]);
           if (pv == null) return info;
           if (box.maxWidth > 700) {
             return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -189,6 +197,26 @@ class _StatusCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// What the on-air monitor found in the transmitted transport stream.
+List<(String, String)>? _monitorRows(MonitorInfo? m) {
+  if (m == null) return null;
+  final dataPackets = m.packets - m.nullPackets;
+  return [
+    if (m.service != null) ('Service', m.provider == null || m.provider!.isEmpty ? m.service! : '${m.service} (${m.provider})'),
+    if (m.streams.isNotEmpty) ('Streams', m.streams.join(', ')),
+    if (dataPackets == 0) ('Content', 'Only null packets'),
+    if (m.width > 0)
+      ('Monitor', '${m.width}x${m.height}, ${m.frames} frames decoded, ${m.fps.toStringAsFixed(1)} fps'
+          '${m.decodeErrors > 0 ? ', ${m.decodeErrors} decode errors' : ''}'
+          '${m.gaps > 0 ? ', skipped ${m.gaps}x while busy' : ''}')
+    else if (dataPackets > 0 && m.note == null)
+      ('Monitor', 'Waiting for a key frame'),
+    if (m.note != null) ('Monitor', m.note!),
+    if (m.audioPackets > 0) ('Audio', '${m.audioPackets} audio packets'),
+    if (m.tsErrors > 0) ('TS errors', '${m.tsErrors}'),
+  ];
 }
 
 class _PreviewImage extends StatefulWidget {

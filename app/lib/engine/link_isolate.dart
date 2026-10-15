@@ -69,6 +69,14 @@ class _LinkServer {
   int _srcPackets = 0, _nullPackets = 0;
   bool _passthrough = false;
 
+  /// The on-air monitor gets a copy of every TS packet sent to the DVB encoder.
+  SendPort? _monitor;
+  final BytesBuilder _monBuf = BytesBuilder(copy: false);
+  final ReceivePort _monAcks = ReceivePort();
+  int _monInFlight = 0;
+  bool _monGap = false;
+  bool _monAckListening = false;
+
   /// File packets per channel packet (TS file passthrough at the file's own rate); 1 = no pacing.
   double _fileShare = 1;
   double _fileCredit = 0;
@@ -84,6 +92,7 @@ class _LinkServer {
 
   Future<void> close() async {
     _pacer?.stop();
+    _monAcks.close();
     await _closeTransport();
   }
 
@@ -223,6 +232,24 @@ class _LinkServer {
     return out;
   }
 
+  /// Copies 8 packets for the monitor; sends them in chunks and skips data while it is busy.
+  Uint8List _tap(Uint8List ts) {
+    final mon = _monitor;
+    if (mon == null) return ts;
+    _monBuf.add(ts);
+    if (_monBuf.length >= 188 * 64) {
+      final chunk = _monBuf.takeBytes();
+      if (_monInFlight >= 4) {
+        _monGap = true;
+      } else {
+        _monInFlight++;
+        mon.send({'k': 'ts', 'data': TransferableTypedData.fromList([chunk]), 'gap': _monGap, 'ack': _monAcks.sendPort});
+        _monGap = false;
+      }
+    }
+    return ts;
+  }
+
   // ---------------------------------------------------------------- TX
   // ---------------------------------------------------------------- receive bursts
   Future<void> _rx(Object? id, Map<String, Object?> m) async {
@@ -317,6 +344,14 @@ class _LinkServer {
           ? 'TS file without PCR: sent at the channel rate'
           : 'TS file at ${(rate / 1000).toStringAsFixed(1)} kb/s, padded with null packets'});
     }
+    _monitor = cw ? null : m['monitor'] as SendPort?;
+    _monBuf.clear();
+    _monInFlight = 0;
+    _monGap = false;
+    if (!_monAckListening) {
+      _monAckListening = true;
+      _monAcks.listen((_) => _monInFlight--);
+    }
     final mux = m['mux'] as Map?;
     _mux = _passthrough || mux == null
         ? null
@@ -361,7 +396,7 @@ class _LinkServer {
       // let media messages in regularly
       if (++yieldCount % 4 == 0) await _yield();
       if (cw) return cwBlock;
-      return enc(_take8());
+      return enc(_tap(_take8()));
     });
     final statTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
       final mx = _mux;
@@ -393,6 +428,7 @@ class _LinkServer {
       statTimer.cancel();
       _pacer = null;
       _mux = null;
+      _monitor = null;
       await _tsFile?.close();
       _tsFile = null;
       String summary;

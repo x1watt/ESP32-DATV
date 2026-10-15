@@ -96,6 +96,9 @@ USB cable, and transmits a video file (`.ts`, or `.mp4` with H.264/AAC), the cam
 screen or a test pattern, with optional microphone sound. All settings above are available.
 Video (H.264), audio (MPEG Layer II), the transport stream and the DVB-S/S2 coding are done
 in Dart; the DVB-S/S2 output is bit-identical to `host/dvbs.py` and `host/dvbs2.py`.
+While transmitting, the app decodes a copy of the transport stream that goes into the DVB
+encoder and shows its picture, service name and streams, so you see what is on air rather
+than the source before encoding.
 
 ```sh
 cd app

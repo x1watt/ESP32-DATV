@@ -80,7 +80,7 @@ class _Encoder {
   int _nextPts = -1;
   int _frames = 0, _dropped = 0, _bytes = 0, _lastQp = 0;
   final Stopwatch _clock = Stopwatch()..start();
-  int _lastPreviewMs = -1000, _lastStatsMs = 0;
+  int _lastStatsMs = 0;
   double _buffered = 0;
   SendPort? _sourceFeedback;
 
@@ -199,11 +199,6 @@ class _Encoder {
       'key': out.keyframe,
     });
     final now = _clock.elapsedMilliseconds;
-    if (now - _lastPreviewMs >= 200) {
-      _lastPreviewMs = now;
-      final (rgba, pw, ph) = i420ToRgbaPreview(f, 320);
-      a.events.send({'ev': 'preview', 'data': TransferableTypedData.fromList([rgba]), 'w': pw, 'h': ph});
-    }
     if (now - _lastStatsMs >= 1000) {
       final secs = (now - _lastStatsMs) / 1000;
       a.events.send({
