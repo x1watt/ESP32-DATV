@@ -137,6 +137,17 @@ void rx_pipe_stop(void) {
     while (running) vTaskDelay(1);
     radio_rx_stop();
     radio_unlock();
+    /* give the internal RAM back: the H.264 encoder needs it when transmit follows */
+    demod_t *m = dm;
+    dvbs_rx_t *v = dv;
+    float *p = ptab;
+    dm = NULL;
+    dv = NULL;
+    ptab = NULL;
+    ptab_size = 0;
+    heap_caps_free(m);
+    heap_caps_free(v);
+    heap_caps_free(p);
 }
 
 bool rx_pipe_running(void) { return running; }

@@ -31,6 +31,6 @@ direct_dependencies:
 - espressif/esp_codec_dev
 - espressif/esp_h264
 - idf
-manifest_hash: 8af2ecaff946368ca7d1f7945ad7dd3e324be443f09010ab1280bdb62935db9c
+manifest_hash: 23ffad439abb2079d7bbed0a5b6c6440cfa5a11130883d6b709a5189f1c3a077
 target: esp32s3
 version: 3.0.0
