@@ -120,6 +120,53 @@ SNR, MER and the measured signal frequency with its error in kHz and ppm, which 
 the crystal correction. It does not decode video. Transmitting and receiving cannot run at
 the same time.
 
+## T-Deck: standalone transmitter and receiver (ESP32-S3)
+
+`tdeck/` is firmware for the LilyGO T-Deck (ESP32-S3) that sends and receives DVB-S pictures and sound
+without a PC or phone. It uses the S3's own 2.4 GHz radio in both directions: transmitting like the C3
+firmware, and receiving through the radio's sample capture, which the S3 (unlike the C3) can read without
+gaps. Two T-Decks, or a T-Deck and any other ESP32-S3 board running the same firmware, can talk to each
+other; the stream is ordinary DVB-S, so other DATV receivers can decode it too.
+
+What it does (DVB-S QPSK, FEC 1/2 to 7/8, roll-off 0.35):
+
+| | |
+|---|---|
+| Transmit | test card with callsign and typed text, H.264 160x96 at 10 fps, MP2 sound 16 kHz from the T-Deck microphone or a 1 kHz tone |
+| Receive | 33 and 66 kS/s (the S3 delivers 250 kS/s of gapless I/Q), picture on the screen, sound on the speaker, lock, MER and frequency offset |
+| Rates | transmit 10 kS/s to 1.25 MS/s; receive up to about 66 kS/s |
+
+Build and flash (ESP-IDF 6.1):
+
+```sh
+cd tdeck
+idf.py set-target esp32s3
+idf.py -p /dev/ttyACM0 build flash
+# once, to start the display interface on a T-Deck (other boards stay console-only):
+echo "BOARD tdeck" > /dev/ttyACM0
+```
+
+For an ESP32-S3 with 4 MB flash and quad PSRAM (used here as a second station without a display):
+
+```sh
+idf.py -B build_sender -D SDKCONFIG=build_sender/sdkconfig \
+       -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.sender" -p /dev/ttyACM1 build flash
+```
+
+On the T-Deck: the trackball moves and clicks, the keyboard types (`r`, `t`, `s` open Receive, Transmit and
+Settings). Settings holds frequency, symbol rate, FEC, callsign, text, audio source, transmit level, receive
+gain and crystal correction; they are kept across power cycles. Boards without a display are driven over
+USB: `SET freq 2370`, `SET baud 66000`, `SET fec 1/2`, `SET call ...`, `AVTX 60` (transmit), `AVRX 60`
+(receive with a status line per second); `SET auto 1` makes such a board transmit from power-up and `STOP`
+ends it. `tdeck/main/main.c` lists all console commands.
+
+Limits: transmitting and receiving do not run at the same time; the receiver decodes H.264 baseline only
+(what the T-Deck, the app and most hardware encoders send); the S3's radio has no loop playback, so the
+transmitter alternates two sample banks and leaves a hole of about 0.5 us every 400 us, and the
+picture is small because the channel at 66 kS/s carries about 60 kbit/s. The receive sensitivity is
+low (short range). Only transmit on frequencies your licence allows. The portable C code (DVB-S
+encoder and decoder, demodulator, transport stream, MP2) has native tests: `make -C tdeck/test run`.
+
 ## Spectra
 
 Measured on 2026-10-05 at 2370 MHz with a tinySA Ultra+, `--amp 300` and null transport

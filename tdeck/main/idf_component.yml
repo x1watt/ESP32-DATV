@@ -1,0 +1,6 @@
+## IDF Component Manager manifest
+dependencies:
+  idf:
+    version: '>=5.4.0'
+  espressif/esp_h264: '*'
+  espressif/esp_codec_dev: '*'

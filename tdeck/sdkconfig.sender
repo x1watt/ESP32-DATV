@@ -1,0 +1,4 @@
+# Overrides for an ESP32-S3 with 4 MB flash and quad PSRAM (the e-paper board used as a test transmitter):
+#   idf.py -B build_sender -D SDKCONFIG=build_sender/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.sender" build
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_SPIRAM_MODE_QUAD=y
